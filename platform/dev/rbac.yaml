@@ -1,3 +1,11 @@
+# =============================================================================
+# File        : platform/dev/rbac.yaml
+# Assignment  : DSO202 Assignment 4 (from Assignment 1 Task 8, as used in Assignment 2)
+# Descriptor  : Unit II 2.3 - RBAC; Unit IV 4.3.1
+# Purpose     : A read-only ServiceAccount for the dev namespace. Kubernetes
+#               RBAC objects belong to the platform layer (chart requirement C8):
+#               the dso202 AppProject is not allowed to create them.
+# =============================================================================
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -14,7 +22,8 @@ rules:
     resources: ["pods", "services", "configmaps", "persistentvolumeclaims", "events"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets"]
+    # statefulsets added in Assignment 4: the database tier is a StatefulSet.
+    resources: ["deployments", "replicasets", "statefulsets"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

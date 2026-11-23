@@ -1,3 +1,13 @@
+# =============================================================================
+# File        : platform/dev/quota-and-limits.yaml
+# Assignment  : DSO202 Assignment 4 (values from Assignment 1 Task 6, as used in Assignment 2)
+# Descriptor  : Unit I 1.5.3 - ResourceQuota and LimitRange; Unit IV 4.3.1
+# Purpose     : Caps what the dev namespace may consume, and gives containers
+#               default requests and limits. Delivered by the platform-dev
+#               Application, so the workload project (dso202) cannot change it.
+#               Because this quota covers requests and limits, every container
+#               in the namespace must declare both (chart requirement C7).
+# =============================================================================
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -11,6 +21,8 @@ spec:
     limits.memory: "3Gi"
     pods: "10"
 ---
+# Defaults injected at admission for any container that omits resources,
+# and the per-container minimum and maximum.
 apiVersion: v1
 kind: LimitRange
 metadata:
