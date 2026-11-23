@@ -1,7 +1,15 @@
-# Chart.yaml - identity of the chart. version = chart version, appVersion = the issued image tag.
+# =============================================================================
+# File        : charts/tasktracker/Chart.yaml
+# Assignment  : DSO202 Assignment 4 (chart from Assignment 3, adjusted for GitOps)
+# Descriptor  : Unit III 3.2 - chart metadata
+# Purpose     : Identity of the chart. 'version' is the chart version and was
+#               raised from 0.1.0 (Assignment 3) because the chart contract
+#               changed it. Image tags are values (requirement C1), so
+#               'appVersion' is informational only.
+# =============================================================================
 apiVersion: v2
 name: tasktracker
-description: DSO202 Task Tracker (Assignment 1) - frontend, backend and PostgreSQL as one Helm release
+description: DSO202 Task Tracker - frontend, backend and PostgreSQL, delivered by Argo CD
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "1.0"

@@ -1,14 +1,13 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app-config
-  labels:
-    {{- include "tasktracker.labels" . | nindent 4 }}
-data:
-  DB_HOST: "db-svc"
-  DB_PORT: "5432"
-  DB_NAME: {{ .Values.config.dbName | quote }}
-  APP_PORT: {{ .Values.config.appPort | quote }}
-  CORS_ORIGIN: {{ .Values.config.corsOrigin | quote }}
-  POSTGRES_DB: {{ .Values.config.dbName | quote }}
-  BACKEND_URL: {{ .Values.config.backendUrl | default (printf "http://backend-svc:%s" .Values.config.appPort) | quote }}
+# =============================================================================
+# File        : charts/tasktracker/templates/configmap.yaml
+# Assignment  : DSO202 Assignment 4 (replaces the single app-config of Assignment 3)
+# Descriptor  : Unit I 1.5 - ConfigMaps; Unit III 3.2 - templates
+# Purpose     : One ConfigMap per tier, each rendered from <tier>.env in the
+#               values (requirement C2). Credentials are not here: they come
+#               from the existing Secret named by 'existingSecret' (C3).
+# =============================================================================
+{{ include "tasktracker.envConfigMap" (dict "root" . "tier" "database" "env" .Values.database.env) }}
+---
+{{ include "tasktracker.envConfigMap" (dict "root" . "tier" "backend" "env" .Values.backend.env) }}
+---
+{{ include "tasktracker.envConfigMap" (dict "root" . "tier" "frontend" "env" .Values.frontend.env) }}

@@ -1,6 +1,14 @@
+# =============================================================================
+# File        : charts/tasktracker/templates/ingress.yaml
+# Assignment  : DSO202 Assignment 4 (from Assignment 3)
+# Descriptor  : Unit II 2.2 - Ingress
+# Purpose     : Kept from Assignment 3 but disabled by default (C9): no ingress
+#               controller is installed in this assignment, and Ingress is not
+#               in the dso202 project whitelist. Nothing renders unless
+#               ingress.enabled is true.
+# =============================================================================
 {{- if .Values.ingress.enabled }}
 {{- $host := required "ingress.host is required when ingress.enabled is true" .Values.ingress.host }}
-# Not part of Assignment 1: lets a browser reach both tiers through the ingress-nginx controller.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

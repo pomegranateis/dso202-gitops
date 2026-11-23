@@ -1,3 +1,10 @@
+# =============================================================================
+# File        : charts/tasktracker/templates/frontend.yaml
+# Assignment  : DSO202 Assignment 4 (from Assignment 3, adjusted for GitOps)
+# Descriptor  : Unit I 1.2 - Deployments and Services; Unit IV 4.3.2, 4.3.3
+# Purpose     : The static web UI and its NodePort Service (frontend-svc). The
+#               NodePort is a value: 30080 in dev, 30081 in staging (C10).
+# =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,8 +12,13 @@ metadata:
   labels:
     {{- include "tasktracker.labels" . | nindent 4 }}
     tier: frontend
+  annotations:
+    # C5: wave 2 - applied after the backend is Healthy.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: {{ .Values.frontend.replicaCount }}
+  # C6
+  progressDeadlineSeconds: 120
   selector:
     matchLabels:
       {{- include "tasktracker.selectorLabels" (dict "root" . "tier" "frontend") | nindent 6 }}
@@ -16,22 +28,31 @@ spec:
         {{- include "tasktracker.labels" . | nindent 8 }}
         tier: frontend
       annotations:
-        # BACKEND_URL is rendered into config.js at container start, so a config change must restart the frontend too.
-        {{- include "tasktracker.configChecksum" . | nindent 8 }}
+        # BACKEND_URL is written into config.js once at container start, so a
+        # change to it must restart the frontend; the checksum does that.
+        {{- include "tasktracker.configChecksum" (dict "root" . "tier" "frontend" "env" .Values.frontend.env) | nindent 8 }}
     spec:
       containers:
         - name: frontend
-          image: {{ include "tasktracker.image" (dict "root" . "name" "frontend") }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "tasktracker.image" .Values.frontend }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
           ports:
             - containerPort: 8080
           envFrom:
             - configMapRef:
-                name: app-config
-          {{- with .Values.frontend.resources }}
+                name: frontend-config
+          # C4
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          # C7
           resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service
@@ -41,12 +62,13 @@ metadata:
     {{- include "tasktracker.labels" . | nindent 4 }}
     tier: frontend
 spec:
+  # C10
   type: {{ .Values.frontend.service.type }}
   selector:
     {{- include "tasktracker.selectorLabels" (dict "root" . "tier" "frontend") | nindent 4 }}
   ports:
     - port: 8080
       targetPort: 8080
-      {{- if and (eq .Values.frontend.service.type "NodePort") .Values.frontend.service.nodePort }}
-      nodePort: {{ .Values.frontend.service.nodePort }}
+      {{- if eq .Values.frontend.service.type "NodePort" }}
+      nodePort: {{ required "frontend.service.nodePort is required for a NodePort Service" .Values.frontend.service.nodePort }}
       {{- end }}

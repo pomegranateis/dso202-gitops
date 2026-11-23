@@ -1,25 +1,63 @@
 {
+  "$comment": "File: charts/tasktracker/values.schema.json | Assignment: DSO202 Assignment 4 (from Assignment 3) | Descriptor: Unit III 3.2 - values validation | Purpose: helm lint/template and Argo CD's rendering fail early on a missing environment, a floating image tag, a missing existingSecret, or an out-of-range NodePort. JSON has no comment syntax, so this header uses the standard $comment keyword.",
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["environment", "image", "frontend", "backend", "credentials"],
-  "properties": {
-    "environment": {
-      "type": "string",
-      "enum": ["dev", "prod"],
-      "description": "Target environment; must be set explicitly"
-    },
+  "required": ["environment", "existingSecret", "database", "backend", "frontend"],
+  "definitions": {
     "image": {
       "type": "object",
-      "required": ["repositoryPrefix"],
+      "required": ["repository", "tag"],
       "properties": {
-        "repositoryPrefix": {"type": "string", "minLength": 1},
-        "tag": {"type": "string"},
-        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {
+          "$comment": "Design rule 3: exact tags only; 'latest' is rejected.",
+          "type": "string",
+          "minLength": 1,
+          "not": {"enum": ["latest", "stable", "master", "HEAD"]}
+        }
+      }
+    },
+    "env": {
+      "$comment": "C2: a flat map of environment variables, all rendered as strings.",
+      "type": "object",
+      "additionalProperties": {"type": ["string", "number", "boolean"]}
+    },
+    "resources": {
+      "$comment": "C7: requests and limits are both required.",
+      "type": "object",
+      "required": ["requests", "limits"]
+    }
+  },
+  "properties": {
+    "environment": {"type": "string", "enum": ["dev", "staging"]},
+    "imagePullPolicy": {"type": "string", "enum": ["IfNotPresent", "Never"]},
+    "existingSecret": {"type": "string", "minLength": 1},
+    "database": {
+      "type": "object",
+      "required": ["image", "env", "resources"],
+      "properties": {
+        "image": {"$ref": "#/definitions/image"},
+        "env": {"$ref": "#/definitions/env"},
+        "resources": {"$ref": "#/definitions/resources"}
+      }
+    },
+    "backend": {
+      "type": "object",
+      "required": ["image", "env", "resources", "replicaCount"],
+      "properties": {
+        "image": {"$ref": "#/definitions/image"},
+        "env": {"$ref": "#/definitions/env"},
+        "resources": {"$ref": "#/definitions/resources"},
+        "replicaCount": {"type": "integer", "minimum": 1}
       }
     },
     "frontend": {
       "type": "object",
+      "required": ["image", "env", "resources", "replicaCount", "service"],
       "properties": {
+        "image": {"$ref": "#/definitions/image"},
+        "env": {"$ref": "#/definitions/env"},
+        "resources": {"$ref": "#/definitions/resources"},
         "replicaCount": {"type": "integer", "minimum": 1},
         "service": {
           "type": "object",
@@ -30,24 +68,9 @@
         }
       }
     },
-    "backend": {
-      "type": "object",
-      "properties": {"replicaCount": {"type": "integer", "minimum": 1}}
-    },
-    "credentials": {
-      "type": "object",
-      "required": ["username", "password"],
-      "properties": {
-        "username": {"type": "string", "minLength": 1},
-        "password": {"type": "string"}
-      }
-    },
     "ingress": {
       "type": "object",
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "host": {"type": "string"}
-      }
+      "properties": {"enabled": {"type": "boolean"}, "host": {"type": "string"}}
     }
   }
 }

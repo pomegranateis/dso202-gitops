@@ -1,66 +1,97 @@
-# values.yaml - defaults for the tasktracker chart. Override with -f <file> or --set.
+# =============================================================================
+# File        : charts/tasktracker/values.yaml
+# Assignment  : DSO202 Assignment 4 (chart from Assignment 3, adjusted for GitOps)
+# Descriptor  : Unit III 3.2 - Helm values; Unit IV 4.3 - delivery by Argo CD
+# Purpose     : Defaults only. Everything that differs between dev and staging
+#               lives in environments/<env>/values.yaml, so the chart itself is
+#               identical in both environments (design rule 2).
+# =============================================================================
 
-# Required: dev or prod. No default on purpose, so the chart refuses to render
-# until an environment is chosen (enforced in values.schema.json).
+# Required: dev or staging. No default on purpose, so the chart refuses to
+# render until an environment is chosen (enforced in values.schema.json).
 environment: ""
 
-# The issued images. An empty tag means "use .Chart.AppVersion".
-image:
-  repositoryPrefix: sarojsanyasi
-  tag: ""
-  pullPolicy: IfNotPresent
+# Never 'Always': images may be loaded into kind from the host (brief section 13).
+imagePullPolicy: IfNotPresent
 
-frontend:
+# C3: the chart never renders a Secret. Pods read the database credentials
+# (DB_USER, DB_PASSWORD, POSTGRES_USER, POSTGRES_PASSWORD) from this existing
+# Secret, which the Sealed Secrets controller creates in the namespace.
+existingSecret: tasktracker-credentials
+
+# -----------------------------------------------------------------------------
+# Database tier (StatefulSet, as in Assignment 2)
+# -----------------------------------------------------------------------------
+database:
+  # C1: repository and tag are values; no tag is written in a template.
+  image:
+    repository: sarojsanyasi/dso202-db
+    tag: "1.0"
+  # C2: rendered into the database-config ConfigMap. Adding a variable here
+  # needs no template change.
+  env:
+    POSTGRES_DB: taskdb
+  storage: 1Gi
+  storageClass: standard
+  # C7: required by the namespace ResourceQuota (platform/<env>/quota-and-limits.yaml).
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -----------------------------------------------------------------------------
+# Backend tier (Deployment)
+# -----------------------------------------------------------------------------
+backend:
+  image:
+    repository: sarojsanyasi/dso202-backend
+    tag: "1.0"
   replicaCount: 1
+  env:
+    DB_HOST: db-svc
+    DB_PORT: "5432"
+    DB_NAME: taskdb
+    APP_PORT: "8080"
+    CORS_ORIGIN: "*"
+  resources:
+    requests:
+      cpu: 150m
+      memory: 192Mi
+    limits:
+      cpu: 400m
+      memory: 384Mi
+
+# -----------------------------------------------------------------------------
+# Frontend tier (Deployment)
+# -----------------------------------------------------------------------------
+frontend:
+  image:
+    repository: sarojsanyasi/dso202-frontend
+    tag: "1.0"
+  replicaCount: 1
+  env:
+    # The browser calls this address directly (the frontend does not proxy
+    # /api). The default is the cluster-internal name from Assignment 1; each
+    # environment overrides it with an address the browser can reach.
+    BACKEND_URL: http://backend-svc:8080
+  # C10: NodePort, with the port number as a value.
   service:
     type: NodePort
     nodePort: 30080
-  resources: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
 
-backend:
-  replicaCount: 1
-  resources: {}
-
-database:
-  storage: 1Gi
-  storageClass: standard
-  resources: {}
-
-# Non-sensitive configuration, rendered into the app-config ConfigMap.
-config:
-  dbName: taskdb
-  appPort: "8080"
-  corsOrigin: "*"
-  # What the browser uses to reach the API. Empty = cluster-internal backend-svc (Assignment 1 behaviour).
-  backendUrl: ""
-
-# Database credentials, rendered into the app-secret Secret.
-# Never committed: supplied from a git-ignored file (see secrets.example.yaml).
-credentials:
-  username: taskuser
-  password: ""
-
+# C9: no ingress controller is installed in this assignment, so the Ingress
+# template from Assignment 3 is disabled by default.
 ingress:
   enabled: false
   className: nginx
   host: ""
-
-quota:
-  enabled: true
-  hard:
-    requests.cpu: "1500m"
-    requests.memory: "1.5Gi"
-    limits.cpu: "3000m"
-    limits.memory: "3Gi"
-    pods: "10"
-
-limitRange:
-  enabled: true
-  default: {cpu: "250m", memory: "256Mi"}
-  defaultRequest: {cpu: "100m", memory: "128Mi"}
-  max: {cpu: "500m", memory: "512Mi"}
-  min: {cpu: "50m", memory: "64Mi"}
-
-rbac:
-  # Assignment 1 Task 8: read-only ServiceAccount, Role and RoleBinding.
-  enabled: true

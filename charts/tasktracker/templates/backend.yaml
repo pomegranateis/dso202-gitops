@@ -1,3 +1,10 @@
+# =============================================================================
+# File        : charts/tasktracker/templates/backend.yaml
+# Assignment  : DSO202 Assignment 4 (from Assignment 3, adjusted for GitOps)
+# Descriptor  : Unit I 1.2 - Deployments and Services; Unit IV 4.3.2, 4.3.3
+# Purpose     : The REST API and its ClusterIP Service (backend-svc). The
+#               Service name is the one the smoke test calls.
+# =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,8 +12,14 @@ metadata:
   labels:
     {{- include "tasktracker.labels" . | nindent 4 }}
     tier: backend
+  annotations:
+    # C5: wave 1 - applied after the database is Healthy.
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   replicas: {{ .Values.backend.replicaCount }}
+  # C6: report a stuck rollout after 2 minutes instead of the default 10, so
+  # Argo CD marks the Application Degraded quickly (Task 7).
+  progressDeadlineSeconds: 120
   selector:
     matchLabels:
       {{- include "tasktracker.selectorLabels" (dict "root" . "tier" "backend") | nindent 6 }}
@@ -16,23 +29,31 @@ spec:
         {{- include "tasktracker.labels" . | nindent 8 }}
         tier: backend
       annotations:
-        {{- include "tasktracker.configChecksum" . | nindent 8 }}
+        {{- include "tasktracker.configChecksum" (dict "root" . "tier" "backend" "env" .Values.backend.env) | nindent 8 }}
     spec:
       containers:
         - name: backend
-          image: {{ include "tasktracker.image" (dict "root" . "name" "backend") }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "tasktracker.image" .Values.backend }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
           ports:
             - containerPort: 8080
           envFrom:
             - configMapRef:
-                name: app-config
+                name: backend-config
             - secretRef:
-                name: app-secret
-          {{- with .Values.backend.resources }}
+                name: {{ required "existingSecret is required" .Values.existingSecret }}
+          # C4: GET /api/status, as the brief specifies.
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          # C7
           resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- toYaml .Values.backend.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service

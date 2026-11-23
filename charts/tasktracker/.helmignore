@@ -1,3 +1,9 @@
+# =============================================================================
+# File        : charts/tasktracker/.helmignore
+# Assignment  : DSO202 Assignment 4 (from Assignment 3)
+# Descriptor  : Unit III 3.2 - chart packaging
+# Purpose     : Files left out when the chart is packaged with 'helm package'.
+# =============================================================================
 .DS_Store
 *.swp
 *.bak
