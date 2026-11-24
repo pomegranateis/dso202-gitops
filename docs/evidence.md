@@ -246,17 +246,18 @@ The `argocd` CLI binary was copied from the official `quay.io/argoproj/argocd:v3
 release download from GitHub kept stalling; `argocd version` above shows the same build
 (`GitTag v3.5.6`, `GitCommit c2b1e30`, `GitTreeState clean`) for client and server.
 
-![Argo CD UI after admin sign-in](screenshots/a4-1-argocd-signed-in.png)
+![Argo CD v3.5.6 after admin sign-in: all six Applications Healthy and Synced](screenshots/a4-1-argocd-signed-in.jpg)
 
 ## Task 3 — AppProjects and the Root Application
 
 ### Whitelist check (step 1)
 
 The chart renders `ConfigMap`, `Deployment`, `Service`, `StatefulSet` and, from Task 5, the hook `Job`.
-`argocd/projects/dso202.yaml` lists exactly these five kinds. Compared with Listing 8, `ServiceAccount`
-was removed (the chart renders none; the Assignment 2 ServiceAccount is in `platform/<env>/rbac.yaml`), and
-`PersistentVolumeClaim` was not added (the database PVC comes from `volumeClaimTemplates`). Each change is
-commented in the file.
+At this point `argocd/projects/dso202.yaml` listed exactly these five kinds. Compared with Listing 8,
+`ServiceAccount` was removed (the chart renders none; the Assignment 2 ServiceAccount is in
+`platform/<env>/rbac.yaml`), and `PersistentVolumeClaim` was not added (the database PVC comes from
+`volumeClaimTemplates`). Each change is commented in the file. In Task 6, `ReplicaSet` and `Pod` were added
+so that Argo CD shows the Pods and their logs (see Task 6).
 
 ### Apply and observe (steps 4, 5)
 ```text
@@ -311,7 +312,7 @@ Orphaned Resources:          disabled
 `dso202` was created by the root Application: it appears in the resource list of `argocd app get root`,
 and it is three seconds younger than `platform`, which was applied by hand.
 
-![Root Application resource tree](screenshots/a4-2-root-tree.png)
+![Root Application resource tree: five child Applications and the dso202 AppProject](screenshots/a4-2-root-tree.jpg)
 
 ## Task 4 — Platform Layer and Sealed Secrets
 
@@ -510,6 +511,10 @@ Assignment 2 LimitRange sets that minimum, and a server-side dry run of the list
 02:28:00 MODIFIED tasktracker-smoke-test-kbm8t 0/1 ContainerCreating
 02:28:04 MODIFIED tasktracker-smoke-test-kbm8t 1/1 Running
 02:28:04 MODIFIED tasktracker-smoke-test-kbm8t 0/1 Completed
+02:41:23 ADDED tasktracker-smoke-test-926bq 0/1 Pending
+02:41:23 MODIFIED tasktracker-smoke-test-926bq 0/1 ContainerCreating
+02:41:26 MODIFIED tasktracker-smoke-test-926bq 1/1 Running
+02:41:27 MODIFIED tasktracker-smoke-test-926bq 0/1 Completed
 ```
 
 Each tier was created in the same second the previous one became ready: the database became ready (`1/1`) at
@@ -604,7 +609,9 @@ argoproj.io  Application  argocd     platform-staging     Synced  Healthy
 argoproj.io  Application  argocd     sealed-secrets       Synced  Healthy
 ```
 
-![tasktracker-dev resource tree](screenshots/a4-3-tasktracker-dev-tree.png)
+![tasktracker-dev resource tree: ConfigMaps, Services, Deployments with their ReplicaSets and Pods, the StatefulSet and its Pod, and the PostSync Job](screenshots/a4-3-tasktracker-dev-tree.jpg)
+
+The screenshot was taken after the Task 6 whitelist change; before it, the tree showed the same objects without the ReplicaSet and Pod nodes.
 
 ### CRUD cycle in dev (step 4)
 
@@ -643,6 +650,8 @@ HTTP 204
 $ curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://localhost:8090/api/tasks/4
 HTTP 404
 ```
+
+![Dev UI at http://localhost:30080: BACKEND + DB ONLINE](screenshots/a4-5-dev-ui.jpg)
 
 ### Staging, synchronised by hand (step 5)
 
@@ -741,6 +750,8 @@ $ kubectl logs job/tasktracker-smoke-test -n dso202-staging
 [{"id":1,"title":"Set up kind cluster","description":"Bring up the local cluster from Practical 1","status":"done","crea
 ```
 
+![Staging UI at http://localhost:8081 (port-forward): BACKEND + DB ONLINE](screenshots/a4-6-staging-ui.jpg)
+
 ## Task 6 — Access Control for Argo CD Users
 
 ### Account, password, and the three permission states (steps 1-3)
@@ -808,7 +819,59 @@ CURRENT  NAME            SERVER
          reviewer        localhost:8080
 ```
 
-![reviewer session showing Pod logs](screenshots/a4-4-reviewer-logs.png)
+### Pods were not visible, so no logs could be served
+
+With the log rule in place, the reviewer's UI and `argocd app logs` still returned no log lines, and the same
+command as `admin` also returned nothing. `argocd app get tasktracker-dev -o tree` showed the Deployments,
+StatefulSet and Job but none of their ReplicaSets or Pods, while `sealed-secrets` (in the unrestricted
+`platform` project) showed `Deployment -> ReplicaSet -> Pod`. Argo CD leaves kinds that the project does not
+permit out of an Application's resource tree, and it serves logs only for Pods in that tree. Commit `d270fd2`
+added `ReplicaSet` and `Pod` to the `dso202` whitelist, with a comment. This does not let a commit do anything
+new in practice: a `Deployment` is already permitted and can run any Pod.
+```text
+```text
+# Before the change (whitelist without ReplicaSet and Pod):
+$ argocd app get tasktracker-dev -o tree   -> Deployment/StatefulSet/Job only; no ReplicaSet or Pod nodes
+$ argocd --argocd-context reviewer app logs tasktracker-dev --kind Deployment --name backend-deployment --tail 3
+(no output; the same command as admin also printed nothing)
+$ argocd app get sealed-secrets -o tree   (platform project, all kinds permitted) | grep -E "Deployment|ReplicaSet|Pod"
+Deployment/sealed-secrets-controller                   Synced  Healthy  deployment.apps/sealed-secrets-controller created
+└─ReplicaSet/sealed-secrets-controller-8b5ffdf69               Healthy  
+  └─Pod/sealed-secrets-controller-8b5ffdf69-2bfvk              Healthy  
+
+# After commit d270fd2 (ReplicaSet and Pod added to the dso202 whitelist):
+$ argocd app get tasktracker-dev -o tree | grep -E "Deployment|StatefulSet|ReplicaSet|Pod|Job"
+Deployment/backend-deployment                Synced     Healthy  deployment.apps/backend-deployment unchanged
+└─ReplicaSet/backend-deployment-6cbf846f89              Healthy  
+  └─Pod/backend-deployment-6cbf846f89-c4h5c             Healthy  
+Deployment/frontend-deployment               Synced     Healthy  deployment.apps/frontend-deployment unchanged
+└─ReplicaSet/frontend-deployment-84f799988              Healthy  
+  └─Pod/frontend-deployment-84f799988-hwv8n             Healthy  
+StatefulSet/db-statefulset                   Synced     Healthy  statefulset rolling update complete 1 pods at revision db-statefulset-6d7bbcddb4...
+└─Pod/db-statefulset-0                                  Healthy  
+Job/tasktracker-smoke-test                   Succeeded  Synced   Reached expected number of succeeded pods
+└─Pod/tasktracker-smoke-test-926bq                      Healthy  
+
+$ argocd --argocd-context reviewer app logs tasktracker-dev --kind Deployment --name backend-deployment --tail 3
+[db] connected
+[server] listening on :8080
+$ argocd --argocd-context reviewer account can-i get logs 'platform/platform-dev'
+no
+```
+```
+
+### Reviewer session in the UI
+
+The browser was signed out of the `admin` session and signed in as `reviewer` (a separate session, in place of a
+private window). The reviewer sees only the two `dso202` Applications and can read Pod logs. The log viewer's
+*follow* mode streams through the `kubectl port-forward`, which kept dropping the stream; with *follow* turned
+off the viewer fetched the log once.
+
+![reviewer reading the backend Pod's logs in tasktracker-dev](screenshots/a4-4-reviewer-logs.jpg)
+
+![User Info: signed in as reviewer](screenshots/a4-4b-reviewer-user-info.jpg)
+
+![reviewer's Applications page: only tasktracker-dev and tasktracker-staging](screenshots/a4-4c-reviewer-applications.jpg)
 
 ## Task 7 — A Release, a Faulty Release, and Recovery
 

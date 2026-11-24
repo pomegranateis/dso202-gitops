@@ -167,6 +167,10 @@ Application and every workload through the finalizers; it is not part of normal 
   the database is the Assignment 2 StatefulSet, so the chart renders exactly the five kinds in the project
   whitelist; the PVC comes from `volumeClaimTemplates`.
 - **Whitelist.** `ServiceAccount` was removed from Listing 8's whitelist because the chart renders none.
+  `ReplicaSet` and `Pod` were added (commit `d270fd2`): the chart does not render them, but Argo CD leaves
+  kinds the project does not permit out of the resource tree, so the Pods were invisible and no Pod logs could
+  be served, which Task 6 requires. A `Deployment` is already permitted and can run any Pod, so this does not
+  widen what a commit can do.
 - **Smoke-test resources.** Listing 13's `10m`/`16Mi` are below the Assignment 2 LimitRange minimum
   (`50m`/`64Mi`) and were rejected by the API server; the Job uses the minimum.
 - **Database user names.** The first credential search found `taskuser`, which entered the history with the
@@ -177,7 +181,42 @@ Application and every workload through the finalizers; it is not part of normal 
 - **`argocd` CLI source.** The binary was copied from the official `quay.io/argoproj/argocd:v3.5.6` image because
   the GitHub download kept stalling; client and server report the same build.
 
-## 8. Written Answers
+## 8. Screenshots
+
+The brief requires four screenshots (Tasks 2, 3, 5 and 6); the others show the application itself. All of them
+are referenced again, with the command output around them, in [`docs/evidence.md`](docs/evidence.md).
+
+**Argo CD after admin sign-in (Task 2):** v3.5.6, all six Applications `Healthy` and `Synced`.
+
+![Argo CD after admin sign-in](docs/screenshots/a4-1-argocd-signed-in.jpg)
+
+**The root Application's resource tree (Task 3):** the five child Applications and the `dso202` AppProject,
+all created by the root from `argocd/`.
+
+![Root Application resource tree](docs/screenshots/a4-2-root-tree.jpg)
+
+**The `tasktracker-dev` resource tree (Task 5):** ConfigMaps, Services, both Deployments with their ReplicaSets
+and Pods, the database StatefulSet and its Pod, and the PostSync smoke-test Job.
+
+![tasktracker-dev resource tree](docs/screenshots/a4-3-tasktracker-dev-tree.jpg)
+
+**The `reviewer` account reading Pod logs (Task 6):** signed in as `reviewer`, which sees only the two `dso202`
+Applications.
+
+![reviewer reading the backend Pod's logs](docs/screenshots/a4-4-reviewer-logs.jpg)
+
+![User Info: reviewer](docs/screenshots/a4-4b-reviewer-user-info.jpg)
+
+![reviewer's Applications page](docs/screenshots/a4-4c-reviewer-applications.jpg)
+
+**The application in both environments (Task 5):** dev at `http://localhost:30080` and staging at
+`http://localhost:8081` (port-forward), each reporting `BACKEND + DB ONLINE`.
+
+![Dev UI](docs/screenshots/a4-5-dev-ui.jpg)
+
+![Staging UI](docs/screenshots/a4-6-staging-ui.jpg)
+
+## 9. Written Answers
 
 ### Q1 — Why is `platform` applied by hand while `dso202` is created by the root, and what if `dso202` could deploy into `argocd`?
 
