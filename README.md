@@ -88,6 +88,16 @@ cd dso202-gitops
 kind create cluster --name dso202-gitops --config cluster/kind-cluster.yaml
 kubectl config current-context            # kind-dso202-gitops
 
+# 1a. Load the images from the host (section 13). Required on an x86_64 host: the Task Tracker images are
+#     linux/arm64 only, so the nodes cannot pull them themselves; they were pulled on the host with
+#     'docker pull --platform linux/arm64 ...'. The other images are loaded because registry pulls stall on
+#     this network. This step creates no Kubernetes object.
+for img in pomegranatei/dso202-frontend:1.0 pomegranatei/dso202-backend:1.0 pomegranatei/dso202-db:1.0 \
+           busybox:1.37 docker.io/bitnami/sealed-secrets-controller:0.40.0 quay.io/argoproj/argocd:v3.5.6 \
+           ghcr.io/dexidp/dex:v2.45.1 public.ecr.aws/docker/library/redis:8.2.3-alpine; do
+  kind load docker-image "$img" --name dso202-gitops
+done
+
 # 2. Restore the sealing key BEFORE the controller exists, so the SealedSecrets in Git stay decryptable.
 #    (Skip on the very first build: the controller then generates a key, which must be backed up at once.)
 kubectl create namespace sealed-secrets
@@ -120,11 +130,9 @@ kubectl get secret -n sealed-secrets -l sealedsecrets.bitnami.com/sealed-secrets
 chmod 600 ../dso202-keys/sealing-key.backup.yaml
 ```
 
-On a network where Docker Hub, `ghcr.io` or `quay.io` pulls stall, the images can be pulled on the host and loaded
-before step 3: `kind load docker-image <image> --name dso202-gitops` for the three Task Tracker images,
-`busybox:1.37`, `docker.io/bitnami/sealed-secrets-controller:0.40.0`, `quay.io/argoproj/argocd:v3.5.6`,
-`ghcr.io/dexidp/dex:v2.45.1` and `public.ecr.aws/docker/library/redis:8.2.3-alpine`. Every image uses the
-`IfNotPresent` pull policy, so loaded images are used.
+Every image uses the `IfNotPresent` pull policy, so the loaded images are used. In Task 9 this sequence took
+**3 min 18 s** from `kind delete cluster` to a working dev frontend, and staging was back on its tag after one manual
+sync (evidence, Task 9).
 
 ### Why the UI needs a port-forward for the API
 
@@ -178,6 +186,9 @@ Application and every workload through the finalizers; it is not part of normal 
   Git (commit `3c670f8`).
 - **Root health before the first staging sync.** Argo CD v3.5.6 kept the root `Healthy` while
   `tasktracker-staging` was `Missing` (see evidence, Task 5, and Q3).
+- **Wave gating during the rebuild.** Each child Application briefly reported `Healthy` right after creation,
+  before its first sync, so the root released the next wave early; the retries and `SkipDryRunOnMissingResource`
+  in the Applications absorbed it (evidence, Task 9).
 - **`argocd` CLI source.** The binary was copied from the official `quay.io/argoproj/argocd:v3.5.6` image because
   the GitHub download kept stalling; client and server report the same build.
 - **Task 7 without 1.1 images.** The release images `frontend:1.1` and `backend:1.1` were never issued, and no other
@@ -341,3 +352,45 @@ merge. A smaller `retry.limit` (or `argocd app terminate-op`) shortens that wind
   branch.
 - **It fits the next step.** The fix-forward (#5, `7883dc7`) builds on top of the revert, so the sequence bad
   commit → revert → fixed release stays readable, and only the fixed release was tagged and promoted to staging.
+
+### Q6 — (a) One repository: advantages and disadvantages. (b) What is not under GitOps control after the rebuild?
+
+**(a)** Advantages of keeping the chart and the environment configuration in one repository, for this project:
+
+1. **A release is one reviewable, atomic change.** The chart, both values files and the promotion live together,
+   so a tag such as `v1.2.0` pins the chart *and* the staging values to the same commit. Staging cannot get a new
+   chart with old values, or the other way round, and each pull request in Task 7 shows the whole change.
+2. **Bootstrap and rebuild are simple.** One clone, one URL in every `sourceRepos` and Application, no repository
+   credentials, and one history to search for leaked secrets. Task 9 rebuilt everything from a single checkout and
+   one key.
+
+Disadvantages:
+
+1. **No separation of permissions or change cadence.** Anyone who may merge a chart change may also merge into
+   `argocd/` (which creates Applications and AppProjects) or into `platform/` (quotas, credentials). Separate
+   repositories would let a platform team own those with stricter review, while the workload chart moves faster.
+2. **Unrelated commits trigger delivery work and blur the history.** Dev follows the tip of `main`, so every commit,
+   even a documentation-only one, is a new revision for `tasktracker-dev`: in this repository each docs commit was
+   synchronised to dev and re-ran the smoke test (for example revisions `6d61d0b` and `e2cc6c0`). A tag for staging
+   also captures everything else in the repository at that moment. In a larger team the deployment history would
+   mix application, platform and documentation changes.
+
+**(b)** Not under GitOps control after the rebuild, and how a production team usually handles each:
+
+- **The kind cluster itself** (`cluster/kind-cluster.yaml`, created by hand): clusters are provisioned with
+  infrastructure as code (Terraform, Cluster API or a managed-Kubernetes module) and recreated by a pipeline.
+- **The bootstrap layer** (`bootstrap/argocd`, applied with `kubectl apply -k`, including `argocd-cm` and
+  `argocd-rbac-cm`, which is why the Task 6 change needed a manual re-apply): after the first install Argo CD
+  usually manages itself through an Application that points at its own manifests, or the install is part of the
+  cluster-provisioning code.
+- **The root Application and the `platform` project** (`bootstrap/root`): created by the same provisioning step
+  (or by a management cluster with an ApplicationSet), so no person applies them.
+- **The sealing key** (backed up by hand to `../dso202-keys/`): kept in a managed secret store or KMS with
+  automated backup and rotation, or replaced by the External Secrets Operator or SOPS with a cloud KMS, so that no
+  per-cluster private key has to be copied around by hand.
+- **The database contents** (lost in the rebuild): a managed database or a PostgreSQL operator with scheduled
+  backups to object storage and point-in-time recovery (for example CloudNativePG backups, or Velero for volumes),
+  with restores tested regularly.
+- **Access credentials** (the generated admin password, the reviewer password, the image loading and
+  port-forwards): admin is disabled and users sign in through SSO; images come from a registry the cluster can
+  pull from, and services are reached through an ingress controller instead of port-forwards.
