@@ -16,6 +16,13 @@ backend:
     tag: "1.0"
   # One replica per tier to conserve memory (brief Task 1, step 5).
   replicaCount: 1
+  # Backend release 1.2.0 (Task 7, part B), fixed forward: per-environment
+  # settings. 982fb28 set DB_PORT to 5433 and was reverted (40cc33b);
+  # PostgreSQL listens on 5432.
+  env:
+    # Only this environment's UI may call the API (the chart default is "*").
+    CORS_ORIGIN: http://localhost:30080
+    DB_PORT: "5432"
 frontend:
   image:
     tag: "1.0"
