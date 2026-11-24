@@ -875,13 +875,483 @@ off the viewer fetched the log once.
 
 ## Task 7 — A Release, a Faulty Release, and Recovery
 
-_Pending: the release images `frontend:1.1` and `backend:1.1` have not been issued by the module tutor yet (the
-tutor's Docker Hub repositories contain only tag `1.0`). Task 8 was therefore performed before Task 7; its drills
-do not depend on the state left by Task 7._
+**Adaptation.** The release images `frontend:1.1` and `backend:1.1` of section 8 were never issued (the tutor's
+Docker Hub repositories contain only `1.0`), and section 10 forbids any other image. Task 7 was therefore carried
+out with the issued `1.0` images, and each release is a values change (chart contract C2):
+
+- **Frontend release 1.1.0:** two frontend replicas and a `RELEASE=1.1.0` marker in the Pods' environment (the
+  page header of the 1.0 image cannot display a release number).
+- **Backend release 1.2.0:** CORS restricted to each environment's own UI origin, and the database connection
+  settings moved into the environment values. The first version of this release **deliberately** set
+  `DB_PORT: "5433"` (PostgreSQL listens on 5432). This injected fault stands in for the unannounced start-up
+  requirement of the missing backend 1.1 image, and it was declared as deliberate in pull request #3.
+
+Every change went through a branch and a pull request, merged with squash. Task 8 had been done before Task 7,
+while the release images were still expected; it does not depend on Task 7's state.
+
+### Starting state
+```text
+$ date
+Wed Nov 25 03:03:15 AM +06 2026
+
+$ kubectl get applications -n argocd
+NAME                  SYNC STATUS   HEALTH STATUS
+platform-dev          Synced        Healthy
+platform-staging      Synced        Healthy
+root                  Synced        Healthy
+sealed-secrets        Synced        Healthy
+tasktracker-dev       Synced        Healthy
+tasktracker-staging   Synced        Healthy
+
+$ kubectl get deploy -n dso202-dev; kubectl get deploy -n dso202-staging
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment    1/1     1            1           41m
+frontend-deployment   1/1     1            1           41m
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment    1/1     1            1           40m
+frontend-deployment   1/1     1            1           39m
+
+$ argocd app history tasktracker-dev | tail -3
+0       2026-11-25 02:22:06 +0600 +06  main (bafe41d)
+1       2026-11-25 02:28:06 +0600 +06  main (9df8c1c)
+2       2026-11-25 02:41:29 +0600 +06  main (6d61d0b)
+$ argocd app history tasktracker-staging
+SOURCE  https://github.com/pomegranateis/dso202-gitops.git
+ID      DATE                           REVISION
+0       2026-11-25 02:23:38 +0600 +06  v1.0.0 (740cfb5)
+1       2026-11-25 02:29:32 +0600 +06  v1.0.0 (740cfb5)
+```
+
+### Pull requests and history
+
+PR merge times from GitHub are in UTC (local time is UTC+6).
+```text
+$ gh pr list --state all
+#1  MERGED  21:03:47  release/frontend-1.1.0  Frontend release 1.1.0
+#2  MERGED  21:04:49  promote/staging-v1.1.0  Promote staging to v1.1.0
+#3  MERGED  21:06:15  release/backend-1.2.0  Backend release 1.2.0: per-environment CORS and database settings
+#4  MERGED  21:10:57  revert/backend-1.2.0  Revert backend release 1.2.0 (dev Degraded)
+#5  MERGED  21:17:39  release/backend-1.2.0-fixed  Backend release 1.2.0, fixed forward
+#6  MERGED  21:18:51  promote/staging-v1.2.0  Promote staging to v1.2.0
+
+$ git log --oneline --graph --decorate -n 15
+* 0879cf4 (HEAD -> main, origin/main) Promote staging to v1.2.0 (#6)
+* 7883dc7 (tag: v1.2.0) Backend release 1.2.0 (fixed forward): per-environment CORS origin, database port 5432 (#5)
+* 40cc33b Revert "Backend release 1.2.0: per-environment CORS origin and database settings (#3)" (#4)
+* 982fb28 Backend release 1.2.0: per-environment CORS origin and database settings (#3)
+* 4ac77f5 Promote staging to v1.1.0 (#2)
+* 486335d (tag: v1.1.0) Frontend release 1.1.0: two replicas and a release marker (dev and staging values) (#1)
+* e2cc6c0 Docs: screenshots (Tasks 2, 3, 5, 6 and both UIs), whitelist change and reviewer log access in evidence and README
+* d270fd2 dso202 project: permit ReplicaSet and Pod so Argo CD shows them and serves their logs
+* 6d61d0b Docs: evidence for Task 8 (four drills with predictions and observations)
+* ffe596f Revert "Task 8 drill 4: add a ResourceQuota to the workload chart (expect the project to reject it)"
+* 099d6af Task 8 drill 4: add a ResourceQuota to the workload chart (expect the project to reject it)
+* 4446e1d Task 8 drill 3: remove the throwaway ConfigMap from Git (expect pruning)
+* 84ca178 Task 8 drill 3: add a throwaway ConfigMap to the dev platform layer
+* e6ba1c2 Docs: README (purpose, versions, build sequence, credentials, Q1-Q4) and evidence for Tasks 1-6
+* 9df8c1c Argo CD RBAC: grant the reviewer read access to Pod logs in the dso202 project
+```
+
+### Part A — frontend release 1.1.0, promoted (steps 1-3)
+
+Pull request #1 changed `environments/dev/values.yaml` and `environments/staging/values.yaml`. Dev deployed it
+28 seconds after the merge; staging, still on `v1.0.0`, did not change.
+```text
+$ gh pr merge 1 --squash --delete-branch   (main -> 486335d at 03:03:53)
+
+$ argocd app get tasktracker-dev
+Sync Status:        Synced to main (486335d)
+Health Status:      Healthy
+apps   Deployment   dso202-dev  frontend-deployment     Synced     Healthy            deployment.apps/frontend-deployment configured
+batch  Job          dso202-dev  tasktracker-smoke-test  Succeeded  Synced   PostSync  Reached expected number of succeeded pods
+
+$ kubectl get pods -n dso202-dev -l tier=frontend
+NAME                                   READY   STATUS    RESTARTS   AGE
+frontend-deployment-75897697bb-pkznm   1/1     Running   0          20s
+frontend-deployment-75897697bb-t4kc6   1/1     Running   0          14s
+
+$ kubectl exec -n dso202-dev deploy/frontend-deployment -- printenv RELEASE
+1.1.0
+
+$ argocd app history tasktracker-dev
+SOURCE  https://github.com/pomegranateis/dso202-gitops.git
+ID      DATE                           REVISION
+0       2026-11-25 02:22:06 +0600 +06  main (bafe41d)
+1       2026-11-25 02:28:06 +0600 +06  main (9df8c1c)
+2       2026-11-25 02:41:29 +0600 +06  main (6d61d0b)
+3       2026-11-25 03:04:20 +0600 +06  main (486335d)
+```
+
+`v1.1.0` was tagged on `486335d` and pull request #2 moved staging's `targetRevision` to it. Before the manual sync,
+staging was `OutOfSync` but still ran the old frontend (one Pod, no `RELEASE` variable); after the sync it ran the
+release.
+```text
+$ gh pr merge 2 --squash --delete-branch   (main -> 4ac77f5 at 03:04:54)
+
+03:05:06 $ argocd app get tasktracker-staging
+Sync Status:        OutOfSync from v1.1.0 (486335d)
+Health Status:      Healthy
+apps   Deployment   dso202-staging  frontend-deployment     OutOfSync  Healthy            deployment.apps/frontend-deployment unchanged
+
+03:05:06 $ kubectl get pods -n dso202-staging -l tier=frontend
+NAME                                   READY   STATUS    RESTARTS   AGE
+frontend-deployment-5dcdd65cd9-jzldp   1/1     Running   0          41m
+
+03:05:06 $ kubectl exec -n dso202-staging deploy/frontend-deployment -- printenv RELEASE
+command terminated with exit code 1
+(exit 1 - no RELEASE variable: staging still runs v1.0.0)
+
+03:05:06 $ curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/
+200
+
+03:05:06 $ argocd app sync tasktracker-staging
+2026-11-25T03:05:13+06:00   apps  Deployment  dso202-staging   frontend-deployment    Synced  Progressing              deployment.apps/frontend-deployment configured
+2026-11-25T03:05:24+06:00   apps  Deployment  dso202-staging   frontend-deployment    Synced  Healthy              deployment.apps/frontend-deployment configured
+2026-11-25T03:05:30+06:00  batch         Job  dso202-staging  tasktracker-smoke-test  Succeeded   Synced    PostSync  Reached expected number of succeeded pods
+Sync Status:        Synced to v1.1.0 (486335d)
+Health Status:      Healthy
+Phase:              Succeeded
+Message:            successfully synced (no more tasks)
+apps   Deployment   dso202-staging  frontend-deployment     Synced     Healthy            deployment.apps/frontend-deployment configured
+batch  Job          dso202-staging  tasktracker-smoke-test  Succeeded  Synced   PostSync  Reached expected number of succeeded pods
+
+03:05:31 $ kubectl get pods -n dso202-staging -l tier=frontend
+NAME                                   READY   STATUS    RESTARTS   AGE
+frontend-deployment-5dbc7f4f5d-czpzc   1/1     Running   0          21s
+frontend-deployment-5dbc7f4f5d-l9hmj   1/1     Running   0          14s
+03:05:32 $ kubectl exec -n dso202-staging deploy/frontend-deployment -- printenv RELEASE
+1.1.0
+
+$ argocd app history tasktracker-staging
+SOURCE  https://github.com/pomegranateis/dso202-gitops.git
+ID      DATE                           REVISION
+0       2026-11-25 02:23:38 +0600 +06  v1.0.0 (740cfb5)
+1       2026-11-25 02:29:32 +0600 +06  v1.0.0 (740cfb5)
+2       2026-11-25 03:05:30 +0600 +06  v1.1.0 (486335d)
+```
+
+### Part B — the faulty backend release (steps 4-6)
+
+Pull request #3 was merged as **`982fb28`, the bad commit**. Observations, without intervening, every 30 seconds:
+```text
+===== 03:06:30
+backend-deployment-6cbf846f89-c4h5c   1/1   Running   0     44m
+tasktracker-dev: OutOfSync / Healthy / revision 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 / operation Running
+frontend http://localhost:30080 -> 200   API (old backend via port-forward 8090) -> {"status":"ok","db":"connected"}
+deployment condition: True NewReplicaSetAvailable: ReplicaSet "backend-deployment-6cbf846f89" has successfully progressed.
+===== 03:06:58
+backend-deployment-644c5b497f-wmr8b   0/1   Running   0     26s
+backend-deployment-6cbf846f89-c4h5c   1/1   Running   0     45m
+tasktracker-dev: Synced / Progressing / revision 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 / operation Running
+frontend http://localhost:30080 -> 200   API (old backend via port-forward 8090) -> {"status":"ok","db":"connected"}
+deployment condition: True ReplicaSetUpdated: ReplicaSet "backend-deployment-644c5b497f" is progressing.
+===== 03:07:26
+backend-deployment-644c5b497f-wmr8b   0/1   Running   0     54s
+backend-deployment-6cbf846f89-c4h5c   1/1   Running   0     45m
+tasktracker-dev: Synced / Progressing / revision 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 / operation Running
+frontend http://localhost:30080 -> 200   API (old backend via port-forward 8090) -> {"status":"ok","db":"connected"}
+deployment condition: True ReplicaSetUpdated: ReplicaSet "backend-deployment-644c5b497f" is progressing.
+===== 03:07:54
+backend-deployment-644c5b497f-wmr8b   0/1   Running   0     82s
+backend-deployment-6cbf846f89-c4h5c   1/1   Running   0     46m
+tasktracker-dev: Synced / Progressing / revision 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 / operation Running
+frontend http://localhost:30080 -> 200   API (old backend via port-forward 8090) -> {"status":"ok","db":"connected"}
+deployment condition: True ReplicaSetUpdated: ReplicaSet "backend-deployment-644c5b497f" is progressing.
+===== 03:08:22
+backend-deployment-644c5b497f-wmr8b   0/1   Running   0     110s
+backend-deployment-6cbf846f89-c4h5c   1/1   Running   0     46m
+tasktracker-dev: Synced / Progressing / revision 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 / operation Running
+frontend http://localhost:30080 -> 200   API (old backend via port-forward 8090) -> {"status":"ok","db":"connected"}
+deployment condition: True ReplicaSetUpdated: ReplicaSet "backend-deployment-644c5b497f" is progressing.
+===== 03:08:51
+backend-deployment-644c5b497f-wmr8b   0/1   Running   0     2m19s
+backend-deployment-6cbf846f89-c4h5c   1/1   Running   0     47m
+tasktracker-dev: Synced / Degraded / revision 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 / operation Running
+frontend http://localhost:30080 -> 200   API (old backend via port-forward 8090) -> {"status":"ok","db":"connected"}
+deployment condition: False ProgressDeadlineExceeded: ReplicaSet "backend-deployment-644c5b497f" has timed out progressing.
+===== 03:09:19
+backend-deployment-644c5b497f-wmr8b   0/1   Running   0     2m47s
+backend-deployment-6cbf846f89-c4h5c   1/1   Running   0     47m
+tasktracker-dev: Synced / Degraded / revision 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 / operation Running
+frontend http://localhost:30080 -> 200   API (old backend via port-forward 8090) -> {"status":"ok","db":"connected"}
+deployment condition: False ProgressDeadlineExceeded: ReplicaSet "backend-deployment-644c5b497f" has timed out progressing.
+===== 03:09:47
+backend-deployment-644c5b497f-wmr8b   0/1   Running   0     3m15s
+backend-deployment-6cbf846f89-c4h5c   1/1   Running   0     48m
+tasktracker-dev: Synced / Degraded / revision 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 / operation Running
+frontend http://localhost:30080 -> 200   API (old backend via port-forward 8090) -> {"status":"ok","db":"connected"}
+deployment condition: False ProgressDeadlineExceeded: ReplicaSet "backend-deployment-644c5b497f" has timed out progressing.
+```
+
+- **New backend Pod** (`644c5b497f-wmr8b`): `Running` but never `Ready` (`0/1`).
+- **Old backend Pod** (`6cbf846f89-c4h5c`): kept running (`1/1`), and the Service kept routing to it; the frontend
+  answered `200` and the API answered `connected` throughout.
+- **Application:** `Synced` / `Progressing`, then **`Synced` / `Degraded`** at 03:08:51, when the Deployment
+  reported `ProgressDeadlineExceeded` (`progressDeadlineSeconds: 120`, chart contract C6). The root Application
+  also became `Degraded`, because the restored health check (Listing 4) reports a child's health upward.
+- **Smoke test:** did not run for `982fb28`. The sync operation stayed `Running`, waiting for the resources to
+  become healthy before the PostSync phase; the only Job is the one from the previous sync.
+```text
+$ kubectl get applications -n argocd
+NAME                  SYNC STATUS   HEALTH STATUS
+platform-dev          Synced        Healthy
+platform-staging      Synced        Healthy
+root                  Synced        Degraded
+sealed-secrets        Synced        Healthy
+tasktracker-dev       Synced        Degraded
+tasktracker-staging   Synced        Healthy
+
+$ argocd app get tasktracker-dev
+Sync Status:        Synced to main (982fb28)
+Health Status:      Degraded
+apps   Deployment   dso202-dev  backend-deployment      Synced  Degraded        Deployment "backend-deployment" exceeded its progress deadline
+batch  Job          dso202-dev  tasktracker-smoke-test          Healthy         
+
+$ kubectl get job -n dso202-dev   (smoke test from the previous sync; no new run for 982fb28)
+NAME                     COMPLETIONS   CREATED
+tasktracker-smoke-test   1             2026-11-24T21:04:14Z
+
+$ kubectl get pods -n dso202-dev
+NAME                                   READY   STATUS      RESTARTS   AGE
+backend-deployment-644c5b497f-wmr8b    0/1     Running     0          3m56s
+backend-deployment-6cbf846f89-c4h5c    1/1     Running     0          48m
+db-statefulset-0                       1/1     Running     0          49m
+frontend-deployment-75897697bb-pkznm   1/1     Running     0          6m27s
+frontend-deployment-75897697bb-t4kc6   1/1     Running     0          6m21s
+tasktracker-smoke-test-j5ws9           0/1     Completed   0          6m14s
+```
+
+**Diagnosis (step 6).** The exact log line: **`[db] not reachable yet (ECONNREFUSED), retrying in 2000ms`**,
+repeated every two seconds. The backend waits for the database before it starts listening, so the readiness
+probe gets `connection refused` on port 8080. The Pod's environment shows the cause: `DB_PORT=5433`.
+```text
+$ kubectl describe pod backend-deployment-644c5b497f-wmr8b -n dso202-dev   (excerpt: Conditions, readiness probe and Events)
+    Readiness:  http-get http://:8080/api/status delay=5s timeout=3s period=5s #success=1 #failure=6
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       False 
+  ContainersReady             False 
+  PodScheduled                True 
+Events:
+  Type     Reason     Age                    From               Message
+  ----     ------     ----                   ----               -------
+  Normal   Scheduled  3m55s                  default-scheduler  Successfully assigned dso202-dev/backend-deployment-644c5b497f-wmr8b to worker-node-2
+  Normal   Pulled     3m55s                  kubelet            spec.containers{backend}: Container image "pomegranatei/dso202-backend:1.0" already present on machine and can be accessed by the pod
+  Normal   Created    3m55s                  kubelet            spec.containers{backend}: Container created
+  Normal   Started    3m55s                  kubelet            spec.containers{backend}: Container started
+  Warning  Unhealthy  115s (x25 over 3m50s)  kubelet            spec.containers{backend}: Readiness probe failed: Get "http://10.244.1.20:8080/api/status": dial tcp 10.244.1.20:8080: connect: connection refused
+
+$ kubectl logs backend-deployment-644c5b497f-wmr8b -n dso202-dev | tail -5
+[db] not reachable yet (ECONNREFUSED), retrying in 2000ms
+[db] not reachable yet (ECONNREFUSED), retrying in 2000ms
+[db] not reachable yet (ECONNREFUSED), retrying in 2000ms
+[db] not reachable yet (ECONNREFUSED), retrying in 2000ms
+[db] not reachable yet (ECONNREFUSED), retrying in 2000ms
+
+$ kubectl exec -n dso202-dev backend-deployment-644c5b497f-wmr8b -- printenv DB_HOST DB_PORT
+db-svc
+5433
+```
+
+### `argocd app rollback` (step 7)
+```text
+$ argocd app rollback tasktracker-dev
+{"level":"fatal","msg":"rpc error: code = FailedPrecondition desc = rollback cannot be initiated when auto-sync is enabled","time":"2026-11-25T03:10:35+06:00"}
+(exit code 20)
+
+$ argocd app history tasktracker-dev
+SOURCE  https://github.com/pomegranateis/dso202-gitops.git
+ID      DATE                           REVISION
+0       2026-11-25 02:22:06 +0600 +06  main (bafe41d)
+1       2026-11-25 02:28:06 +0600 +06  main (9df8c1c)
+2       2026-11-25 02:41:29 +0600 +06  main (6d61d0b)
+3       2026-11-25 03:04:20 +0600 +06  main (486335d)
+```
+
+Refused with `FailedPrecondition`: *rollback cannot be initiated when auto-sync is enabled*. The history has no
+entry for `982fb28`, because its sync operation never completed.
+
+### Recovery by `git revert` (step 8)
+
+Pull request #4 reverted `982fb28` (squash-merged, so no `-m 1` was needed); main became `40cc33b`. Dev did **not**
+recover at once: the sync operation for the bad revision was still running under the Application's retry policy
+(`limit: 5`), which keeps retrying the same revision, and automated sync does not start a new operation while one
+is running. After the fifth attempt failed, Argo CD synchronised the revert by itself.
+```text
+$ git checkout -b revert/backend-1.2.0; git revert 982fb28; git push -u origin revert/backend-1.2.0
+$ gh pr create ... ; gh pr merge 4 --squash   (main -> 40cc33b)
+
+03:15:08 $ argocd app get tasktracker-dev
+Sync Status:        OutOfSync from main (40cc33b)
+Health Status:      Degraded
+apps   Deployment   dso202-dev  backend-deployment      OutOfSync  Degraded        Deployment "backend-deployment" exceeded its progress deadline
+batch  Job          dso202-dev  tasktracker-smoke-test             Healthy         
+
+03:15:08 $ kubectl get pods -n dso202-dev -l tier=backend
+NAME                                  READY   STATUS    RESTARTS   AGE
+backend-deployment-644c5b497f-wmr8b   0/1     Running   0          8m36s
+backend-deployment-6cbf846f89-c4h5c   1/1     Running   0          53m
+$ kubectl exec -n dso202-dev deploy/backend-deployment -- printenv DB_PORT CORS_ORIGIN
+5432
+*
+
+$ kubectl get applications -n argocd
+NAME                  SYNC STATUS   HEALTH STATUS
+platform-dev          Synced        Healthy
+platform-staging      Synced        Healthy
+root                  Synced        Degraded
+sealed-secrets        Synced        Healthy
+tasktracker-dev       OutOfSync     Degraded
+tasktracker-staging   Synced        Healthy
+
+$ argocd app history tasktracker-dev
+SOURCE  https://github.com/pomegranateis/dso202-gitops.git
+ID      DATE                           REVISION
+0       2026-11-25 02:22:06 +0600 +06  main (bafe41d)
+1       2026-11-25 02:28:06 +0600 +06  main (9df8c1c)
+2       2026-11-25 02:41:29 +0600 +06  main (6d61d0b)
+3       2026-11-25 03:04:20 +0600 +06  main (486335d)
+```
+```text
+03:15:30 operation on tasktracker-dev: Running for 982fb28ef9e0e5e14338b03a315f97b84bcea5d9 - one or more synchronization tasks completed unsuccessfully. Retrying attempt #5 at 9:16PM.
+03:15:30 operation=Running rev=982fb28 sync=OutOfSync health=Degraded
+03:16:55 operation=Running rev=40cc33b sync=OutOfSync health=Degraded
+03:16:59 operation=Running rev=40cc33b sync=Synced health=Healthy
+03:17:07 operation=Succeeded rev=40cc33b sync=Synced health=Healthy
+
+03:17:07 $ kubectl get pods -n dso202-dev -l tier=backend
+NAME                                  READY   STATUS    RESTARTS   AGE
+backend-deployment-6cbf846f89-c4h5c   1/1     Running   0          55m
+03:17:22 $ argocd app get tasktracker-dev
+Sync Status:        Synced to main (40cc33b)
+Health Status:      Healthy
+apps   Deployment   dso202-dev  backend-deployment      Synced     Healthy            deployment.apps/backend-deployment configured
+batch  Job          dso202-dev  tasktracker-smoke-test  Succeeded  Synced   PostSync  Reached expected number of succeeded pods
+
+$ kubectl get applications -n argocd
+NAME                  SYNC STATUS   HEALTH STATUS
+platform-dev          Synced        Healthy
+platform-staging      Synced        Healthy
+root                  Synced        Healthy
+sealed-secrets        Synced        Healthy
+tasktracker-dev       Synced        Healthy
+tasktracker-staging   Synced        Healthy
+
+$ argocd app history tasktracker-dev
+SOURCE  https://github.com/pomegranateis/dso202-gitops.git
+ID      DATE                           REVISION
+0       2026-11-25 02:22:06 +0600 +06  main (bafe41d)
+1       2026-11-25 02:28:06 +0600 +06  main (9df8c1c)
+2       2026-11-25 02:41:29 +0600 +06  main (6d61d0b)
+3       2026-11-25 03:04:20 +0600 +06  main (486335d)
+4       2026-11-25 03:17:06 +0600 +06  main (40cc33b)
+```
+
+### Fix forward (step 9)
+
+Pull request #5 re-applied the release with `DB_PORT: "5432"`. Dev became `Healthy` 32 seconds after the merge,
+with a passing smoke test.
+```text
+$ gh pr merge 5 --squash   (main -> 7883dc7 at 03:17:44)
+
+03:18:15 $ argocd app get tasktracker-dev
+Sync Status:        Synced to main (7883dc7)
+Health Status:      Healthy
+apps   Deployment   dso202-dev  backend-deployment      Synced     Healthy            deployment.apps/backend-deployment configured
+batch  Job          dso202-dev  tasktracker-smoke-test  Succeeded  Synced   PostSync  Reached expected number of succeeded pods
+
+$ kubectl get pods -n dso202-dev -l tier=backend
+NAME                                  READY   STATUS    RESTARTS   AGE
+backend-deployment-64d65dd597-k4ltr   1/1     Running   0          26s
+$ kubectl logs backend-deployment-64d65dd597-k4ltr -n dso202-dev
+[db] connected
+[server] listening on :8080
+$ kubectl exec -n dso202-dev backend-deployment-64d65dd597-k4ltr -- printenv DB_PORT CORS_ORIGIN
+5432
+http://localhost:30080
+
+$ kubectl logs job/tasktracker-smoke-test -n dso202-dev | cut -c1-80
+[{"id":1,"title":"Set up kind cluster","description":"Bring up the local cluster
+
+$ curl -s -D - -o /dev/null -H 'Origin: http://localhost:30080' http://localhost:8090/api/status | grep -i -E 'HTTP/|access-control'
+(the port-forward to the replaced Pod had dropped; re-established and run again:)
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: http://localhost:30080
+
+$ argocd app history tasktracker-dev
+SOURCE  https://github.com/pomegranateis/dso202-gitops.git
+ID      DATE                           REVISION
+0       2026-11-25 02:22:06 +0600 +06  main (bafe41d)
+1       2026-11-25 02:28:06 +0600 +06  main (9df8c1c)
+2       2026-11-25 02:41:29 +0600 +06  main (6d61d0b)
+3       2026-11-25 03:04:20 +0600 +06  main (486335d)
+4       2026-11-25 03:17:06 +0600 +06  main (40cc33b)
+5       2026-11-25 03:18:13 +0600 +06  main (7883dc7)
+```
+
+### Promotion of the fixed release (step 10)
+
+`v1.2.0` was tagged on `7883dc7` and pull request #6 moved staging to it. Staging never ran the faulty backend:
+its history contains only `v1.0.0`, `v1.1.0` and `v1.2.0`, none of which has `DB_PORT: "5433"`, and no tag points
+at `982fb28`.
+```text
+$ git tag -a v1.2.0; git push origin v1.2.0   (v1.2.0 -> 7883dc7)
+$ gh pr merge 6 --squash   (main -> 0879cf4)
+
+03:19:08 $ argocd app get tasktracker-staging   (before the manual sync)
+Sync Status:        OutOfSync from v1.2.0 (7883dc7)
+Health Status:      Healthy
+apps   Deployment   dso202-staging  backend-deployment      OutOfSync  Healthy            deployment.apps/backend-deployment unchanged
+03:19:08 $ kubectl exec -n dso202-staging deploy/backend-deployment -- printenv CORS_ORIGIN
+*
+
+03:19:08 $ argocd app sync tasktracker-staging
+2026-11-25T03:19:13+06:00   apps  Deployment   dso202-staging    backend-deployment    Synced  Progressing              deployment.apps/backend-deployment configured
+2026-11-25T03:19:22+06:00   apps  Deployment  dso202-staging    backend-deployment    Synced  Healthy              deployment.apps/backend-deployment configured
+2026-11-25T03:19:30+06:00  batch         Job  dso202-staging  tasktracker-smoke-test  Succeeded   Synced    PostSync  Reached expected number of succeeded pods
+apps   Deployment   dso202-staging  backend-deployment      Synced     Healthy            deployment.apps/backend-deployment configured
+batch  Job          dso202-staging  tasktracker-smoke-test  Succeeded  Synced   PostSync  Reached expected number of succeeded pods
+Health Status:      Healthy
+Message:            successfully synced (no more tasks)
+Phase:              Succeeded
+Sync Status:        Synced to v1.2.0 (7883dc7)
+
+03:19:32 $ kubectl get pods -n dso202-staging -l tier=backend
+NAME                                 READY   STATUS    RESTARTS   AGE
+backend-deployment-767c5c85d-pt6pf   1/1     Running   0          21s
+$ kubectl logs backend-deployment-767c5c85d-pt6pf -n dso202-staging
+[db] connected
+[server] listening on :8080
+$ kubectl exec -n dso202-staging backend-deployment-767c5c85d-pt6pf -- printenv DB_PORT CORS_ORIGIN
+5432
+http://localhost:8081
+
+$ argocd app history tasktracker-staging
+SOURCE  https://github.com/pomegranateis/dso202-gitops.git
+ID      DATE                           REVISION
+0       2026-11-25 02:23:38 +0600 +06  v1.0.0 (740cfb5)
+1       2026-11-25 02:29:32 +0600 +06  v1.0.0 (740cfb5)
+2       2026-11-25 03:05:30 +0600 +06  v1.1.0 (486335d)
+3       2026-11-25 03:19:30 +0600 +06  v1.2.0 (7883dc7)
+
+# Staging never ran the faulty backend: DB_PORT in the staging values at each revision staging has read
+$ git show v1.0.0:environments/staging/values.yaml | grep DB_PORT
+(none: chart default 5432)
+$ git show v1.1.0:environments/staging/values.yaml | grep DB_PORT
+(none: chart default 5432)
+$ git show v1.2.0:environments/staging/values.yaml | grep DB_PORT
+  # settings. 982fb28 set DB_PORT to 5433 and was reverted (40cc33b);
+    DB_PORT: "5432"
+$ git tag --contains 982fb28 --points-at 982fb28
+(no tag points at the faulty commit)
+```
+
 
 ## Task 8 — Drift, Pruning and Project Guardrails
 
-Each prediction was written before the action. Times are local.
+Each prediction was written before the action. Times are local. Task 8 was done before Task 7 (see the note in Task 7).
 
 ### Drill 1 - drift in dev is reverted
 

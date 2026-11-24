@@ -25,7 +25,7 @@ by hand: a release is a commit, a promotion is a commit that moves a tag, and a 
 | Environment | Namespace | Follows | Sync | Frontend |
 | --- | --- | --- | --- | --- |
 | dev | `dso202-dev` | branch `main` | automated, prune, self-heal | `http://localhost:30080` |
-| staging | `dso202-staging` | a tag (`v1.0.0`, `v1.1.0`, …) | manual (the promotion gate) | `kubectl port-forward`, `http://localhost:8081` |
+| staging | `dso202-staging` | a tag (currently `v1.2.0`) | manual (the promotion gate) | `kubectl port-forward`, `http://localhost:8081` |
 
 Command output for every task is in [`docs/evidence.md`](docs/evidence.md).
 
@@ -180,6 +180,13 @@ Application and every workload through the finalizers; it is not part of normal 
   `tasktracker-staging` was `Missing` (see evidence, Task 5, and Q3).
 - **`argocd` CLI source.** The binary was copied from the official `quay.io/argoproj/argocd:v3.5.6` image because
   the GitHub download kept stalling; client and server report the same build.
+- **Task 7 without 1.1 images.** The release images `frontend:1.1` and `backend:1.1` were never issued, and no other
+  image may be used, so Task 7 used the `1.0` images and made each release a values change: frontend release 1.1.0
+  (two replicas and a `RELEASE` marker) and backend release 1.2.0 (per-environment CORS and database settings).
+  The failure was injected **deliberately** in pull request #3 (`DB_PORT: "5433"`, while PostgreSQL listens on
+  5432) and declared as such; it stands in for the missing image's start-up requirement. Diagnosis, rollback
+  refusal, revert, fix-forward and promotion were done as the brief describes. Task 8 was done before Task 7
+  while the images were still expected.
 
 ## 8. Screenshots
 
@@ -307,3 +314,30 @@ g, my-org:dso202-reviewers, role:dso202-reviewer
 
 The `accounts.reviewer` entry would be removed, joining or leaving the group in the identity provider would grant
 or revoke access, and `scopes` in `argocd-rbac-cm` would name the token claim that carries the groups.
+
+### Q5 — Why is `argocd app rollback` refused, what replaces it, and why `git revert` rather than deleting the commit?
+
+`argocd app rollback tasktracker-dev` answered `FailedPrecondition ... rollback cannot be initiated when auto-sync
+is enabled`. A rollback is an imperative instruction to deploy an older revision from Argo CD's history, while
+the Application still declares `targetRevision: main`. With automated sync, Git is the only source of desired
+state: the cluster would immediately differ from `main` again and the controller would sync `main` back, so the
+two would fight. Argo CD therefore refuses the operation instead of letting the cluster drift from Git.
+
+The GitOps equivalent is a change to Git: `git revert` of the bad commit, merged through a pull request (#4 here,
+`40cc33b` reverting `982fb28`). Argo CD pulls the revert like any other commit and applies it. One detail showed up
+in this run: the sync of the bad revision was still running under the Application's retry policy, which retries the
+same revision, so the revert reached the cluster only after the fifth retry had failed, about six minutes after the
+merge. A smaller `retry.limit` (or `argocd app terminate-op`) shortens that window.
+
+`git revert` is preferred to removing the bad commit from history for four reasons:
+
+- **The history stays true.** Git is the audit log of what was deployed (principle 2). After the revert it still
+  shows that `982fb28` was merged, that it broke dev, and how it was undone; rewriting history would erase the
+  evidence of the incident.
+- **It is an ordinary change.** A revert is a new commit that goes through the same branch, review and merge as
+  any release. Deleting a commit needs a force-push to `main`, which branch protection normally forbids.
+- **Nothing else breaks.** Every clone, every open branch and every tag based on the old `main` would diverge after
+  a rewrite, and Argo CD's history, which records commit SHAs, would point at commits that no longer exist on the
+  branch.
+- **It fits the next step.** The fix-forward (#5, `7883dc7`) builds on top of the revert, so the sequence bad
+  commit → revert → fixed release stays readable, and only the fixed release was tagged and promoted to staging.
