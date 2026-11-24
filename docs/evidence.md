@@ -496,6 +496,20 @@ Assignment 2 LimitRange sets that minimum, and a server-side dry run of the list
 02:22:00 MODIFIED tasktracker-smoke-test-plh4v 0/1 ContainerCreating
 02:22:03 MODIFIED tasktracker-smoke-test-plh4v 1/1 Running
 02:22:04 MODIFIED tasktracker-smoke-test-plh4v 0/1 Completed
+02:27:51 ADDED backend-deployment-6cbf846f89-qmcgd 0/1 Pending
+02:27:51 ADDED backend-deployment-6cbf846f89-m64x9 0/1 Pending
+02:27:51 MODIFIED backend-deployment-6cbf846f89-qmcgd 0/1 ContainerCreating
+02:27:51 MODIFIED backend-deployment-6cbf846f89-m64x9 0/1 ContainerCreating
+02:27:51 MODIFIED backend-deployment-6cbf846f89-m64x9 0/1 Running
+02:27:51 MODIFIED backend-deployment-6cbf846f89-qmcgd 0/1 Running
+02:27:56 MODIFIED backend-deployment-6cbf846f89-qmcgd 0/1 Terminating
+02:27:56 MODIFIED backend-deployment-6cbf846f89-m64x9 0/1 Terminating
+02:27:56 MODIFIED backend-deployment-6cbf846f89-m64x9 0/1 Error
+02:27:56 MODIFIED backend-deployment-6cbf846f89-qmcgd 0/1 Error
+02:28:00 ADDED tasktracker-smoke-test-kbm8t 0/1 Pending
+02:28:00 MODIFIED tasktracker-smoke-test-kbm8t 0/1 ContainerCreating
+02:28:04 MODIFIED tasktracker-smoke-test-kbm8t 1/1 Running
+02:28:04 MODIFIED tasktracker-smoke-test-kbm8t 0/1 Completed
 ```
 
 Each tier was created in the same second the previous one became ready: the database became ready (`1/1`) at
@@ -795,3 +809,206 @@ CURRENT  NAME            SERVER
 ```
 
 ![reviewer session showing Pod logs](screenshots/a4-4-reviewer-logs.png)
+
+## Task 7 — A Release, a Faulty Release, and Recovery
+
+_Pending: the release images `frontend:1.1` and `backend:1.1` have not been issued by the module tutor yet (the
+tutor's Docker Hub repositories contain only tag `1.0`). Task 8 was therefore performed before Task 7; its drills
+do not depend on the state left by Task 7._
+
+## Task 8 — Drift, Pruning and Project Guardrails
+
+Each prediction was written before the action. Times are local.
+
+### Drill 1 - drift in dev is reverted
+
+**Prediction** (written 02:27:48, before running anything): Scaling the dev backend to 3 by hand makes the live state differ from Git (replicas: 1). Because tasktracker-dev has selfHeal: true, Argo CD will detect the drift within seconds and scale it back to 1; the extra Pods will be created and then terminated.
+
+```text
+$ kubectl get deployment -n dso202-dev
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment    1/1     1            1           6m7s
+frontend-deployment   1/1     1            1           5m55s
+
+$ kubectl get deployment/backend-deployment -n dso202-dev -w    (started before the change; timestamps added)
+02:27:51 $ kubectl scale deployment/backend-deployment -n dso202-dev --replicas=3
+deployment.apps/backend-deployment scaled
+02:27:48 NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+02:27:48 backend-deployment   1/1     1            1           6m7s
+02:27:51 backend-deployment   1/3     1            1           6m10s
+02:27:51 backend-deployment   1/3     1            1           6m10s
+02:27:51 backend-deployment   1/3     1            1           6m10s
+02:27:51 backend-deployment   1/3     3            1           6m10s
+02:27:56 backend-deployment   1/1     3            1           6m15s
+02:27:56 backend-deployment   1/1     3            1           6m15s
+02:27:56 backend-deployment   1/1     3            1           6m15s
+02:27:56 backend-deployment   1/1     1            1           6m15s
+02:27:56 backend-deployment   1/1     1            1           6m15s
+02:27:56 backend-deployment   1/1     1            1           6m15s
+
+$ kubectl get events -n argocd --field-selector involvedObject.name=tasktracker-dev --sort-by=.lastTimestamp | tail -6
+33s         Normal   OperationStarted     application/tasktracker-dev   Initiated automated sync to '9df8c1c9d783327d25c17e749ba4a3deb005a520'
+33s         Normal   ResourceUpdated      application/tasktracker-dev   Updated sync status: Synced -> OutOfSync
+33s         Normal   ResourceUpdated      application/tasktracker-dev   Updated health status: Healthy -> Progressing
+31s         Normal   ResourceUpdated      application/tasktracker-dev   Updated sync status: OutOfSync -> Synced
+31s         Normal   ResourceUpdated      application/tasktracker-dev   Updated health status: Progressing -> Healthy
+21s         Normal   OperationCompleted   application/tasktracker-dev   Sync operation to 9df8c1c9d783327d25c17e749ba4a3deb005a520 succeeded
+
+$ kubectl get deployment/backend-deployment -n dso202-dev
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   1/1     1            1           6m46s
+```
+
+**Observation:** the manual scale to 3 at 02:27:51 was reverted to 1 replica at 02:27:56, five seconds later, before the two extra Pods became ready. **Prediction held.** `selfHeal: true` in `argocd/applications/tasktracker-dev.yaml` makes Argo CD re-apply the desired state as soon as it detects drift (principle 4, continuously reconciled). Restore: none needed; Argo CD restored it.
+
+### Drill 2 - drift in staging is reported, not reverted
+
+**Prediction** (written 02:28:37, before running anything): Staging has no automated sync, so the manual scale to 3 will remain. Argo CD will only report it: tasktracker-staging becomes OutOfSync and argocd app diff shows replicas 3 (live) against 1 (Git). Only a manual argocd app sync will restore 1 replica.
+
+```text
+02:28:37 $ kubectl scale deployment/backend-deployment -n dso202-staging --replicas=3
+deployment.apps/backend-deployment scaled
+
+02:29:17 $ kubectl get deployment/backend-deployment -n dso202-staging   (40 s later)
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   3/3     3            3           6m3s
+
+02:29:17 $ argocd app get tasktracker-staging --refresh
+Sync Status:        OutOfSync from v1.0.0 (740cfb5)
+Health Status:      Healthy
+apps   Deployment   dso202-staging  backend-deployment      OutOfSync  Healthy            deployment.apps/backend-deployment created
+
+02:29:19 $ argocd app diff tasktracker-staging
+
+===== apps/Deployment dso202-staging/backend-deployment ======
+154c154
+<   replicas: 3
+---
+>   replicas: 1
+
+02:29:19 $ kubectl get deployment/backend-deployment -n dso202-staging   (still not reverted)
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   3/3     3            3           6m5s
+
+02:29:19 $ argocd app sync tasktracker-staging
+2026-11-25T02:29:20+06:00   apps  Deployment   dso202-staging    backend-deployment    OutOfSync  Healthy              
+2026-11-25T02:29:20+06:00  batch         Job   dso202-staging  tasktracker-smoke-test             Healthy              
+2026-11-25T02:29:22+06:00   apps  Deployment  dso202-staging    backend-deployment    Synced  Healthy              
+2026-11-25T02:29:24+06:00   apps  Deployment   dso202-staging    backend-deployment    Synced  Healthy              deployment.apps/backend-deployment configured
+2026-11-25T02:29:27+06:00  batch         Job  dso202-staging  tasktracker-smoke-test   Running   Synced    PostSync  job.batch/tasktracker-smoke-test created
+2026-11-25T02:29:32+06:00  batch         Job  dso202-staging  tasktracker-smoke-test  Succeeded   Synced    PostSync  Reached expected number of succeeded pods
+Sync Status:        Synced to v1.0.0 (740cfb5)
+Health Status:      Healthy
+Phase:              Succeeded
+Message:            successfully synced (no more tasks)
+apps   Deployment   dso202-staging  backend-deployment      Synced     Healthy            deployment.apps/backend-deployment configured
+batch  Job          dso202-staging  tasktracker-smoke-test  Succeeded  Synced   PostSync  Reached expected number of succeeded pods
+
+02:29:34 $ kubectl get deployment/backend-deployment -n dso202-staging
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   1/1     1            1           6m20s
+```
+
+**Observation:** the Deployment stayed at 3/3 replicas; after a refresh `tasktracker-staging` was `OutOfSync` (and still `Healthy`, because three ready replicas are healthy), and `argocd app diff` showed exactly `replicas: 3` live against `1` in Git. Nothing reverted it until the manual `argocd app sync` at 02:29:19, after which it was 1/1 and the smoke test passed again. **Prediction held.** `tasktracker-staging` has no `automated` block, so Argo CD still compares continuously (principle 4: drift is detected and reported) but applies nothing until a person synchronises: the approval gate. Restore: the manual sync above.
+
+### Drill 3 - removing a file prunes the object
+
+**Prediction** (written 02:29:46, before running anything): Adding platform/dev/prune-drill.yaml makes platform-dev create the ConfigMap prune-drill in dso202-dev within about a minute of the push. Deleting the file with git rm makes Argo CD delete the ConfigMap, because platform-dev has prune: true.
+
+```text
+02:29:56 $ git commit (add platform/dev/prune-drill.yaml) -> 84ca178; git push
+02:29:56 $ kubectl get configmap prune-drill -n dso202-dev
+NAME          DATA   AGE
+prune-drill   1      2s
+
+02:30:07 $ git rm platform/dev/prune-drill.yaml; git commit -> 4446e1d
+02:30:07 $ git push   -> failed: 'failed to push some refs' (network); nothing reached GitHub
+02:31:40 $ kubectl get configmap prune-drill -n dso202-dev   -> still present (AGE 106s), as expected without the push
+02:31:58 $ git push   -> 84ca178..4446e1d  main -> main
+02:32:04 $ kubectl get configmap prune-drill -n dso202-dev
+Error from server (NotFound): configmaps "prune-drill" not found
+
+$ kubectl get events -n argocd --field-selector involvedObject.name=platform-dev --sort-by=.lastTimestamp | tail -4
+3s          Normal   OperationStarted     application/platform-dev   Initiated automated sync to '4446e1d67c925f9a5996eca0704a8eee8c2d6ed6'
+3s          Normal   ResourceUpdated      application/platform-dev   Updated sync status: Synced -> OutOfSync
+3s          Normal   ResourceUpdated      application/platform-dev   Updated sync status: OutOfSync -> Synced
+3s          Normal   OperationCompleted   application/platform-dev   Sync operation to 4446e1d67c925f9a5996eca0704a8eee8c2d6ed6 succeeded
+
+$ argocd app get platform-dev
+Sync Status:        Synced to main (4446e1d)
+Health Status:      Healthy
+```
+
+**Observation:** the ConfigMap appeared from Git at 02:29:56 and was deleted at 02:32:04, six seconds after the removal commit reached GitHub; while the push had failed it stayed, because Argo CD only follows what is on GitHub. `platform-dev` is `Synced` to the removal commit `4446e1d`. **Prediction held.** `prune: true` in `argocd/applications/platform-dev.yaml` lets Argo CD delete live objects whose file is gone from Git, so the cluster never keeps objects that Git no longer describes (principles 1 and 4). The namespace manifest in the same directory (`platform/dev/namespace.yaml`, Listing 11) carries `argocd.argoproj.io/sync-options: Prune=false`: deleting that file would not delete the namespace (and everything inside it); Argo CD would leave it and report it as no longer in Git, so removing a namespace stays a deliberate manual step. That protection is explained, not tested. Restore: the removal commit is itself the restored state.
+
+### Drill 4 - the project rejects a resource it does not permit
+
+**Prediction** (written 02:32:16, before running anything): Adding a ResourceQuota template to the chart and pushing it makes tasktracker-dev try to apply it. ResourceQuota is not in the dso202 namespaceResourceWhitelist, so the sync will be refused with a "not permitted in project dso202" error and no quota will be created; the existing workloads keep running. Staging is unaffected: it reads tag v1.0.0, which does not contain the file, and it never syncs automatically.
+
+```text
+02:32:3x $ git commit (add charts/tasktracker/templates/drill-quota.yaml) -> 099d6af; git push
+
+02:32:49 $ argocd app get tasktracker-dev
+Name:               argocd/tasktracker-dev
+Project:            dso202
+Server:             https://kubernetes.default.svc
+Namespace:          dso202-dev
+URL:                https://localhost:8080/applications/tasktracker-dev
+Source:
+- Repo:             https://github.com/pomegranateis/dso202-gitops.git
+  Target:           main
+  Path:             charts/tasktracker
+  Helm Values:      ../../environments/dev/values.yaml
+SyncWindow:         Sync Allowed
+Sync Policy:        Automated (Prune)
+Sync Status:        OutOfSync from main (099d6af)
+Health Status:      Healthy
+GROUP  KIND           NAMESPACE   NAME                    STATUS   HEALTH   HOOK  MESSAGE
+       ResourceQuota  dso202-dev  drill-quota             Unknown  Missing        resource :ResourceQuota is not permitted in project dso202
+       ConfigMap      dso202-dev  backend-config          Synced                  
+       ConfigMap      dso202-dev  database-config         Synced                  
+       ConfigMap      dso202-dev  frontend-config         Synced                  
+       Service        dso202-dev  backend-svc             Synced   Healthy        
+       Service        dso202-dev  db-svc                  Synced   Healthy        
+       Service        dso202-dev  frontend-svc            Synced   Healthy        
+apps   Deployment     dso202-dev  backend-deployment      Synced   Healthy        
+apps   Deployment     dso202-dev  frontend-deployment     Synced   Healthy        
+apps   StatefulSet    dso202-dev  db-statefulset          Synced   Healthy        
+batch  Job            dso202-dev  tasktracker-smoke-test           Healthy        
+
+02:32:49 $ kubectl get applications -n argocd
+NAME                  SYNC STATUS   HEALTH STATUS
+platform-dev          Synced        Healthy
+platform-staging      Synced        Healthy
+root                  Synced        Healthy
+sealed-secrets        Synced        Healthy
+tasktracker-dev       OutOfSync     Healthy
+tasktracker-staging   Synced        Healthy
+
+02:32:49 $ kubectl get resourcequota -n dso202-dev
+NAME               REQUEST                                                               LIMIT                                         AGE
+assignment-quota   pods: 3/10, requests.cpu: 350m/1500m, requests.memory: 512Mi/1536Mi   limits.cpu: 1150m/3, limits.memory: 1Gi/3Gi   13m
+
+02:32:49 $ argocd app get tasktracker-staging
+Sync Status:        Synced to v1.0.0 (740cfb5)
+Health Status:      Healthy
+
+02:35:02 $ kubectl get application tasktracker-dev -n argocd -o jsonpath='{.status.conditions[*]}'   (before the revert)
+Running: one or more synchronization tasks are not valid: resource :ResourceQuota is not permitted in project dso202. Retrying attempt #2 at 8:33PM.
+
+02:35:14 $ git revert --no-edit 099d6af -> ffe596f; git push
+02:35:17 $ argocd app get tasktracker-dev
+Sync Status:        Synced to main (ffe596f)
+Health Status:      Healthy
+       ResourceQuota  dso202-dev  drill-quota                     SyncFailed        resource :ResourceQuota is not permitted in project dso202
+02:35:17 $ kubectl get applications -n argocd
+NAME                  SYNC STATUS   HEALTH STATUS
+platform-dev          Synced        Healthy
+platform-staging      Synced        Healthy
+root                  Synced        Healthy
+sealed-secrets        Synced        Healthy
+tasktracker-dev       Synced        Healthy
+tasktracker-staging   Synced        Healthy
+```
+
+**Observation:** after the push, `tasktracker-dev` became `OutOfSync` and stayed `Healthy`: the sync was refused with `resource :ResourceQuota is not permitted in project dso202` (retried with backoff, refused each time), no `drill-quota` object was created, and the running workloads were untouched. Staging stayed `Synced` to `v1.0.0`. After `git revert` of `099d6af` (commit `ffe596f`) dev returned to `Synced`/`Healthy`; the `drill-quota ... SyncFailed` line shown by `argocd app get` is the result of the earlier, refused sync operation. **Prediction held.** The `dso202` AppProject's `namespaceResourceWhitelist` does not list `ResourceQuota`, and the check is made by Argo CD at sync time whoever committed the file, so a commit to the chart cannot loosen the namespace limits (least privilege, section 6.4). Staging was unaffected for two independent reasons: it reads the immutable tag `v1.0.0`, which does not contain the file, and it has no automated sync.
