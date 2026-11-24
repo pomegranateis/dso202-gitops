@@ -27,7 +27,8 @@ by hand: a release is a commit, a promotion is a commit that moves a tag, and a 
 | dev | `dso202-dev` | branch `main` | automated, prune, self-heal | `http://localhost:30080` |
 | staging | `dso202-staging` | a tag (currently `v1.2.0`) | manual (the promotion gate) | `kubectl port-forward`, `http://localhost:8081` |
 
-Command output for every task is in [`docs/evidence.md`](docs/evidence.md).
+Command output for every task is in [`docs/evidence.md`](docs/evidence.md); the screenshots are in
+[section 8](#8-screenshots) below.
 
 ## 2. Repository Layout
 
