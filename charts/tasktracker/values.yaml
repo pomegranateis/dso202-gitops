@@ -14,6 +14,12 @@ environment: ""
 # Never 'Always': images may be loaded into kind from the host (brief section 13).
 imagePullPolicy: IfNotPresent
 
+# Images: the tags issued by the module tutor (brief section 8), re-tagged and
+# pushed to the student's own Docker Hub account, as in Assignment 1. The
+# content of pomegranatei/dso202-*:1.0 is identical to the issued 1.0 images
+# (same image IDs). They are linux/arm64 only and run under emulation on an
+# x86_64 host.
+
 # C3: the chart never renders a Secret. Pods read the database credentials
 # (DB_USER, DB_PASSWORD, POSTGRES_USER, POSTGRES_PASSWORD) from this existing
 # Secret, which the Sealed Secrets controller creates in the namespace.
@@ -25,7 +31,7 @@ existingSecret: tasktracker-credentials
 database:
   # C1: repository and tag are values; no tag is written in a template.
   image:
-    repository: sarojsanyasi/dso202-db
+    repository: pomegranatei/dso202-db
     tag: "1.0"
   # C2: rendered into the database-config ConfigMap. Adding a variable here
   # needs no template change.
@@ -47,7 +53,7 @@ database:
 # -----------------------------------------------------------------------------
 backend:
   image:
-    repository: sarojsanyasi/dso202-backend
+    repository: pomegranatei/dso202-backend
     tag: "1.0"
   replicaCount: 1
   env:
@@ -69,7 +75,7 @@ backend:
 # -----------------------------------------------------------------------------
 frontend:
   image:
-    repository: sarojsanyasi/dso202-frontend
+    repository: pomegranatei/dso202-frontend
     tag: "1.0"
   replicaCount: 1
   env:
