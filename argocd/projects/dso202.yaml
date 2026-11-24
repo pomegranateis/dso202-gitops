@@ -45,6 +45,12 @@ spec:
   #   - PersistentVolumeClaim not added: the database PVC comes from the
   #     StatefulSet's volumeClaimTemplates and is created by the StatefulSet
   #     controller, not by Argo CD.
+  #   - ReplicaSet and Pod added (Task 6): the chart does not render them, but
+  #     Argo CD leaves kinds that are not permitted out of an Application's
+  #     resource tree, so without them the controller-created ReplicaSets and
+  #     Pods were invisible and no Pod logs could be served, even to admin.
+  #     This does not widen what a commit can do: Deployment is already
+  #     permitted, and a Deployment can run any Pod.
   namespaceResourceWhitelist:
     - group: apps
       kind: Deployment
@@ -56,3 +62,8 @@ spec:
       kind: ConfigMap
     - group: batch
       kind: Job
+    # Not rendered by the chart; listed so Argo CD can show them and their logs.
+    - group: apps
+      kind: ReplicaSet
+    - group: ""
+      kind: Pod
