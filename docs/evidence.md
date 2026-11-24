@@ -1779,3 +1779,49 @@ sealed-secrets-key49h67   kubernetes.io/tls   2      3m59s
 $ date
 Wed Nov 25 03:26:18 AM +06 2026
 ```
+
+## Task 10 — Bonus: Chart and Values from Separate Sources
+
+Commit `8e39ebf` replaced `source` with `sources` in `argocd/applications/tasktracker-dev.yaml`: the chart from
+`charts/tasktracker`, and a second source with `ref: values` and no path, referenced as
+`$values/environments/dev/values.yaml` (relative to the repository root). The rendered manifests did not change, so
+the Deployments were not rolled.
+
+```text
+$ argocd app get tasktracker-dev
+Name:               argocd/tasktracker-dev
+Project:            dso202
+Server:             https://kubernetes.default.svc
+Namespace:          dso202-dev
+URL:                https://localhost:8080/applications/tasktracker-dev
+Sources:
+- Repo:             https://github.com/pomegranateis/dso202-gitops.git
+  Target:           main
+  Path:             charts/tasktracker
+  Helm Values:      $values/environments/dev/values.yaml
+- Repo:             https://github.com/pomegranateis/dso202-gitops.git
+  Target:           main
+  Ref:              values
+SyncWindow:         Sync Allowed
+Sync Policy:        Automated (Prune)
+Sync Status:        Synced to main
+Health Status:      Healthy
+
+
+$ kubectl get application tasktracker-dev -n argocd -o jsonpath={.status.sync.revisions}
+["8e39ebf288438725a014eae39f8d7f7fd7a8a0e5","8e39ebf288438725a014eae39f8d7f7fd7a8a0e5"]
+
+$ kubectl get applications -n argocd
+NAME                  SYNC STATUS   HEALTH STATUS
+platform-dev          Synced        Healthy
+platform-staging      Synced        Healthy
+root                  Synced        Healthy
+sealed-secrets        Synced        Healthy
+tasktracker-dev       Synced        Healthy
+tasktracker-staging   Synced        Healthy
+
+$ kubectl get deploy -n dso202-dev
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment    1/1     1            1           5m25s
+frontend-deployment   2/2     2            2           5m13s
+```

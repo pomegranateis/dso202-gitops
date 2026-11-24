@@ -394,3 +394,15 @@ Disadvantages:
 - **Access credentials** (the generated admin password, the reviewer password, the image loading and
   port-forwards): admin is disabled and users sign in through SSO; images come from a registry the cluster can
   pull from, and services are reached through an ingress controller instead of port-forwards.
+
+### Task 10 (bonus) — when separating the chart and the values sources is useful
+
+`tasktracker-dev` now reads the chart and its values file as two sources (`sources:` with `ref: values`, evidence
+Task 10). Separating them pays off when the two change at different speeds or are owned by different people. A
+typical case: the chart is published and reviewed by a platform team and pinned to a released version (a Git tag,
+or a chart version in a Helm or OCI repository), while each environment's values live in an application team's
+configuration repository that follows `main`. A values change (scaling, a new environment variable, a new image tag)
+is then deployed without touching or re-releasing the chart, and a chart upgrade is a deliberate one-line change of
+the chart source's `targetRevision`, reviewed on its own. The same pattern lets one chart version serve several
+environments whose values come from different repositories or branches, which a single `source` with relative
+`valueFiles` cannot express.
