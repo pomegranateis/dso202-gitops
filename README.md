@@ -369,11 +369,11 @@ Disadvantages:
 1. **No separation of permissions or change cadence.** Anyone who may merge a chart change may also merge into
    `argocd/` (which creates Applications and AppProjects) or into `platform/` (quotas, credentials). Separate
    repositories would let a platform team own those with stricter review, while the workload chart moves faster.
-2. **Unrelated commits trigger delivery work and blur the history.** Dev follows the tip of `main`, so every commit,
-   even a documentation-only one, is a new revision for `tasktracker-dev`: in this repository each docs commit was
-   synchronised to dev and re-ran the smoke test (for example revisions `6d61d0b` and `e2cc6c0`). A tag for staging
-   also captures everything else in the repository at that moment. In a larger team the deployment history would
-   mix application, platform and documentation changes.
+2. **Every commit moves every Application, and tags capture everything.** Dev follows the tip of `main`, so even
+   a documentation-only commit becomes the revision that `tasktracker-dev` (and the root and platform
+   Applications) are compared against, and Argo CD renders them again; it deploys only when the rendered manifests
+   change, but the deployment record and the Git history mix application, platform and documentation changes. A
+   tag for staging likewise pins the whole repository, including unrelated changes made since the last release.
 
 **(b)** Not under GitOps control after the rebuild, and how a production team usually handles each:
 
