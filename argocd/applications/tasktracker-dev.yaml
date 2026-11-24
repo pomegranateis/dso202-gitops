@@ -1,8 +1,8 @@
 # =============================================================================
 # File        : argocd/applications/tasktracker-dev.yaml
 # Assignment  : DSO202 Assignment 4
-# Descriptor  : Unit IV 4.3.1 (Application CRDs), 4.3.2 (sync policies),
-#               4.3.3 (health checks); Unit III 3.2 (Helm)
+# Descriptor  : Unit IV 4.3.1 (Application CRDs, multiple sources), 4.3.2 (sync
+#               policies), 4.3.3 (health checks); Unit III 3.2 (Helm)
 # Purpose     : Deploys the Task Tracker Helm chart to the dev environment.
 #               Dev follows the tip of main and heals itself automatically.
 # =============================================================================
@@ -22,19 +22,28 @@ metadata:
 spec:
   project: dso202
 
-  source:
-    repoURL: https://github.com/pomegranateis/dso202-gitops.git
-    # Dev tracks a moving reference: every merge to main is deployed.
-    targetRevision: main
-    path: charts/tasktracker
-    helm:
-      # Fixed release name, so that object names are identical in every
-      # environment; the namespace is what distinguishes them.
-      releaseName: tasktracker
-      # Paths are relative to the chart directory (charts/tasktracker), so two
-      # levels up reaches the repository root.
-      valueFiles:
-        - ../../environments/dev/values.yaml
+  # Task 10 (bonus): two sources. 'sources' replaces 'source'; the two cannot
+  # appear together. The first source is the chart; the second has no path and
+  # exists only to be referenced as $values, so the values file is read from the
+  # root of that source. Both follow main here, but either revision could be
+  # pinned on its own (for example the chart to a tag while values follow main).
+  sources:
+    - repoURL: https://github.com/pomegranateis/dso202-gitops.git
+      # Dev tracks a moving reference: every merge to main is deployed.
+      targetRevision: main
+      path: charts/tasktracker
+      helm:
+        # Fixed release name, so that object names are identical in every
+        # environment; the namespace is what distinguishes them.
+        releaseName: tasktracker
+        # '$values' must start the path and resolves to the root of the source
+        # with 'ref: values', so the path is relative to the repository root
+        # (with a single source it was relative to the chart directory).
+        valueFiles:
+          - $values/environments/dev/values.yaml
+    - repoURL: https://github.com/pomegranateis/dso202-gitops.git
+      targetRevision: main
+      ref: values
 
   destination:
     server: https://kubernetes.default.svc
