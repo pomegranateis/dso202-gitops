@@ -1,0 +1,77 @@
+# =============================================================================
+# File        : charts/tasktracker/templates/smoke-test-job.yaml
+# Assignment  : DSO202 Assignment 4
+# Descriptor  : Unit IV 4.3.2 - sync waves and hooks; 4.3.3 - health checks
+# Purpose     : A PostSync hook. Argo CD creates this Job only after every
+#               resource in the sync has been applied and is Healthy. If the Job
+#               fails, the sync is marked as failed.
+# Note        : Helm ignores the argocd.argoproj.io annotations, so
+#               'helm template' and 'helm install' still render this Job as an
+#               ordinary Job.
+# Changed from Listing 13: the resources (see the comment on them).
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-smoke-test
+  labels:
+    {{- include "tasktracker.labels" . | nindent 4 }}
+    tier: smoke-test
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    # BeforeHookCreation removes the previous run's Job just before the next
+    # run creates a new one, so the most recent result stays available for
+    # 'kubectl logs' between syncs.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        {{- include "tasktracker.labels" . | nindent 8 }}
+        tier: smoke-test
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: smoke-test
+          image: busybox:1.37
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          # Requests are stated because the namespace ResourceQuota requires
+          # them on every Pod. Listing 13 used 10m/16Mi (limits 50m/32Mi); the
+          # Assignment 2 LimitRange (platform/<env>/quota-and-limits.yaml) sets a
+          # per-container minimum of 50m CPU and 64Mi memory, and the API server
+          # rejected those values ("minimum cpu usage per Container is 50m, but
+          # request is 10m"), so the minimum is used for both.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Ten attempts, three seconds apart. backend-svc is the name of
+              # the backend Service rendered by this chart (templates/backend.yaml).
+              # GET /api/tasks reaches the database, so success proves the
+              # backend, the Service, and the database are working together.
+              for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                if wget -q -T 3 -O - http://backend-svc:8080/api/tasks; then
+                  exit 0
+                fi
+                echo "attempt ${attempt} failed"
+                sleep 3
+              done
+              exit 1
